@@ -4,7 +4,11 @@ const ctx = canvas.getContext('2d');
 // Game State
 const game = {
   running: true,
-  frameCount: 0
+  frameCount: 0,
+  arenaLeft: 100,
+  arenaRight: canvas.width - 100,
+  arenaTop: 200,
+  arenaBottom: 450
 };
 
 // Crowd particles
@@ -47,69 +51,155 @@ class Wrestler {
     this.attackDamage = 15;
     this.isHit = false;
     this.hitFlash = 0;
+    this.isJumping = false;
+    this.jumpPower = 15;
+    this.gravity = 0.6;
+    this.isBlocking = false;
+    this.blockDuration = 0;
+    this.blockMaxDuration = 120; // 2 seconds of blocking max
+    this.blockCooldown = 0;
+    this.blockCooldownMax = 60; // 1 second cooldown after block breaks
+    this.groundY = 420;
+    this.lastAttackType = null; // 'punch' or 'kick'
+    this.timeSinceDamage = 0;
+    this.regenDelay = 120; // Start regenerating after 2 seconds
+    this.regenRate = 0.3; // Health per frame
   }
 
   update(keys) {
     // Movement
     this.vx = 0;
-    this.vy = 0;
 
     if (this.isPlayer1) {
-      if (keys['w'] || keys['W']) this.vy = -this.speed;
-      if (keys['s'] || keys['S']) this.vy = this.speed;
+      // Jump with W
+      if ((keys['w'] || keys['W']) && !this.isJumping) {
+        this.vy = -this.jumpPower;
+        this.isJumping = true;
+      }
+      // Block with S
+      if ((keys['s'] || keys['S']) && this.blockCooldown === 0) {
+        if (this.blockDuration < this.blockMaxDuration) {
+          this.isBlocking = true;
+          this.blockDuration++;
+        } else {
+          // Block breaks after max duration
+          this.blockCooldown = this.blockCooldownMax;
+          this.isBlocking = false;
+        }
+      } else {
+        this.isBlocking = false;
+      }
+      // Horizontal movement
       if (keys['a'] || keys['A']) this.vx = -this.speed;
       if (keys['d'] || keys['D']) this.vx = this.speed;
-      if (keys['g'] || keys['G'] && this.attackCooldown === 0) {
-        this.attack(player2);
+      // Punch with G
+      if ((keys['g'] || keys['G']) && this.attackCooldown === 0 && !this.isBlocking) {
+        this.punch(player2);
+      }
+      // Kick with Q
+      if ((keys['q'] || keys['Q']) && this.attackCooldown === 0 && !this.isBlocking) {
+        this.kick(player2);
       }
     } else {
-      if (keys['ArrowUp']) this.vy = -this.speed;
-      if (keys['ArrowDown']) this.vy = this.speed;
+      // Jump with Up Arrow
+      if (keys['ArrowUp'] && !this.isJumping) {
+        this.vy = -this.jumpPower;
+        this.isJumping = true;
+      }
+      // Block with Down Arrow
+      if (keys['ArrowDown'] && this.blockCooldown === 0) {
+        if (this.blockDuration < this.blockMaxDuration) {
+          this.isBlocking = true;
+          this.blockDuration++;
+        } else {
+          // Block breaks after max duration
+          this.blockCooldown = this.blockCooldownMax;
+          this.isBlocking = false;
+        }
+      } else {
+        this.isBlocking = false;
+      }
+      // Horizontal movement
       if (keys['ArrowLeft']) this.vx = -this.speed;
       if (keys['ArrowRight']) this.vx = this.speed;
-      if (keys['l'] || keys['L'] && this.attackCooldown === 0) {
-        this.attack(player1);
+      // Punch with L
+      if ((keys['l'] || keys['L']) && this.attackCooldown === 0 && !this.isBlocking) {
+        this.punch(player1);
+      }
+      // Kick with P
+      if ((keys['p'] || keys['P']) && this.attackCooldown === 0 && !this.isBlocking) {
+        this.kick(player1);
       }
     }
+
+    // Reset block duration if not blocking
+    if (!this.isBlocking) {
+      this.blockDuration = 0;
+    }
+
+    // Apply gravity
+    this.vy += this.gravity;
 
     // Update position
     this.x += this.vx;
     this.y += this.vy;
 
-    // Boundary check
-    this.x = Math.max(0, Math.min(canvas.width - this.width, this.x));
-    this.y = Math.max(150, Math.min(canvas.height - this.height - 20, this.y));
+    // Ground collision
+    if (this.y + this.height >= this.groundY) {
+      this.y = this.groundY - this.height;
+      this.vy = 0;
+      this.isJumping = false;
+    }
 
-    // Cool down
+    // Boundary check (horizontal) - confined to arena
+    this.x = Math.max(game.arenaLeft, Math.min(game.arenaRight - this.width, this.x));
+
+    // Update cooldowns
     if (this.attackCooldown > 0) {
       this.attackCooldown--;
     }
-
+    if (this.blockCooldown > 0) {
+      this.blockCooldown--;
+    }
     if (this.hitFlash > 0) {
       this.hitFlash--;
     }
+
+    // Health regeneration
+    this.timeSinceDamage++;
+    if (this.timeSinceDamage > this.regenDelay && this.health < this.maxHealth) {
+      this.health = Math.min(this.maxHealth, this.health + this.regenRate);
+    }
   }
 
-  attack(opponent) {
+  punch(opponent) {
     const distance = Math.hypot(
       this.x + this.width / 2 - (opponent.x + opponent.width / 2),
       this.y + this.height / 2 - (opponent.y + opponent.height / 2)
     );
 
-    if (distance < this.attackRange) {
-      opponent.takeDamage(this.attackDamage);
-      this.attackCooldown = 30;
-      this.attacking = true;
+    const punchRange = 60;
+    if (distance < punchRange) {
+      // Reduce damage if opponent is blocking
+      let damage = 10; // Punch damage
+      if (opponent.isBlocking) {
+        damage = 10 * 0.3;
+      }
       
-      // Add impact particles
-      for (let i = 0; i < 5; i++) {
+      opponent.takeDamage(damage);
+      this.attackCooldown = 20;
+      this.attacking = true;
+      this.lastAttackType = 'punch';
+      
+      // Add punch particles
+      for (let i = 0; i < 3; i++) {
         particles.push({
           x: opponent.x + opponent.width / 2,
           y: opponent.y + opponent.height / 2,
-          vx: (Math.random() - 0.5) * 8,
-          vy: (Math.random() - 0.5) * 8 - 2,
-          life: 20,
-          color: '#FFD700'
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.5) * 6 - 2,
+          life: 15,
+          color: '#FF6666'
         });
       }
       
@@ -124,10 +214,53 @@ class Wrestler {
     }, 150);
   }
 
+  kick(opponent) {
+    const distance = Math.hypot(
+      this.x + this.width / 2 - (opponent.x + opponent.width / 2),
+      this.y + this.height / 2 - (opponent.y + opponent.height / 2)
+    );
+
+    const kickRange = 120;
+    if (distance < kickRange) {
+      // Reduce damage if opponent is blocking
+      let damage = 20; // Kick damage
+      if (opponent.isBlocking) {
+        damage = 20 * 0.3;
+      }
+      
+      opponent.takeDamage(damage);
+      this.attackCooldown = 40; // Slower cooldown for kicks
+      this.attacking = true;
+      this.lastAttackType = 'kick';
+      
+      // Add kick particles (more particles)
+      for (let i = 0; i < 8; i++) {
+        particles.push({
+          x: opponent.x + opponent.width / 2,
+          y: opponent.y + opponent.height / 2,
+          vx: (Math.random() - 0.5) * 10,
+          vy: (Math.random() - 0.5) * 10 - 2,
+          life: 20,
+          color: '#FFD700'
+        });
+      }
+      
+      // Make crowd cheer more
+      crowdMembers.forEach(member => {
+        member.cheer = member.cheerDuration * 1.5;
+      });
+    }
+
+    setTimeout(() => {
+      this.attacking = false;
+    }, 200);
+  }
+
   takeDamage(damage) {
     this.health -= damage;
     this.hitFlash = 10;
     this.isHit = true;
+    this.timeSinceDamage = 0; // Reset regen timer when taking damage
     setTimeout(() => {
       this.isHit = false;
     }, 200);
@@ -143,6 +276,32 @@ class Wrestler {
 
     const centerX = this.x + this.width / 2;
     const centerY = this.y + this.height / 2;
+
+    // Draw blocking shield
+    if (this.isBlocking) {
+      ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, this.attackRange * 0.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#FFD700';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Show block durability
+      const blockPercent = this.blockDuration / this.blockMaxDuration;
+      ctx.fillStyle = blockPercent > 0.8 ? '#00FF00' : blockPercent > 0.5 ? '#FFFF00' : '#FF0000';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(`Block: ${Math.round((1 - blockPercent) * 100)}%`, centerX, this.y - 40);
+    }
+
+    // Show block cooldown
+    if (this.blockCooldown > 0) {
+      ctx.fillStyle = '#FF0000';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Block Broken!', centerX, this.y - 40);
+    }
 
     // Draw legs
     ctx.fillStyle = '#333333';
@@ -264,7 +423,11 @@ class Wrestler {
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    if (this.health > 50) {
+    if (this.isBlocking) {
+      // Determined look while blocking
+      ctx.moveTo(centerX - 5, this.y - 5);
+      ctx.lineTo(centerX + 5, this.y - 5);
+    } else if (this.health > 50) {
       // Confident smile
       ctx.arc(centerX, this.y - 5, 6, 0, Math.PI);
     } else if (this.health > 25) {
@@ -321,20 +484,43 @@ function drawBackground() {
 
   // Ring floor
   ctx.fillStyle = '#8B4513';
-  ctx.fillRect(50, 300, canvas.width - 100, 200);
+  ctx.fillRect(game.arenaLeft, game.arenaTop, game.arenaRight - game.arenaLeft, game.arenaBottom - game.arenaTop);
 
-  // Ring border
+  // Ring border - solid walls
   ctx.strokeStyle = '#FFD700';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(50, 300, canvas.width - 100, 200);
+  ctx.lineWidth = 8;
+  ctx.strokeRect(game.arenaLeft, game.arenaTop, game.arenaRight - game.arenaLeft, game.arenaBottom - game.arenaTop);
+
+  // Arena walls (filled barriers)
+  ctx.fillStyle = 'rgba(200, 50, 50, 0.8)';
+  // Left wall
+  ctx.fillRect(0, game.arenaTop, game.arenaLeft, game.arenaBottom - game.arenaTop);
+  // Right wall
+  ctx.fillRect(game.arenaRight, game.arenaTop, game.arenaLeft, game.arenaBottom - game.arenaTop);
+
+  // Warning stripes on walls
+  ctx.strokeStyle = '#FFD700';
+  ctx.lineWidth = 3;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.moveTo(game.arenaLeft - 20, game.arenaTop + i * 50);
+    ctx.lineTo(game.arenaLeft + 5, game.arenaTop + i * 50 + 30);
+    ctx.stroke();
+  }
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.moveTo(game.arenaRight + 20, game.arenaTop + i * 50);
+    ctx.lineTo(game.arenaRight - 5, game.arenaTop + i * 50 + 30);
+    ctx.stroke();
+  }
 
   // Ropes
   ctx.strokeStyle = '#FFFFFF';
   ctx.lineWidth = 3;
   for (let i = 0; i < 3; i++) {
     ctx.beginPath();
-    ctx.moveTo(50, 330 + i * 40);
-    ctx.lineTo(canvas.width - 50, 330 + i * 40);
+    ctx.moveTo(game.arenaLeft, game.arenaTop + 40 + i * 50);
+    ctx.lineTo(game.arenaRight, game.arenaTop + 40 + i * 50);
     ctx.stroke();
   }
 }
